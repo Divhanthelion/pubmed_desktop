@@ -1,0 +1,14 @@
+[package]
+name = "pmc_explorer"
+version = "0.1.0"
+edition = "2024"
+description = "Native Apple Silicon UI for PMC Data Harvesting"
+
+[dependencies]
+eframe = "0.34"
+reqwest = { version = "0.13", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+url = "2.5"
+roxmltree = "0.21.1"
