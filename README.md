@@ -4,7 +4,8 @@ A blazing-fast, natively rendered desktop application designed to explore, harve
 
 PMC Explorer is built entirely in Rust using the hardware-accelerated `eframe` / `egui` framework, delivering a unified and native interface without relying on clunky embedded chromium instances or external browser tabs.
 
-![PMC Explorer UI](https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Square_200x200.png/200px-Square_200x200.png) <!-- Feel free to replace this embedded screenshot placeholder with an actual screenshot! -->
+<img width="2558" height="1439" alt="Screenshot 2026-05-12 at 5 56 51 PM" src="https://github.com/user-attachments/assets/fcb43ded-1111-496b-8e12-ca6bbbd098fd" />
+
 
 ## Features
 
