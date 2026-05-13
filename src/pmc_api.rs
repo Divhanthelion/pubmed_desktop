@@ -1,5 +1,6 @@
 use reqwest::Client;
 use serde::Deserialize;
+use serde_json::json;
 use std::collections::HashMap;
 use url::form_urlencoded;
 
@@ -106,6 +107,36 @@ pub async fn fetch_pmc_summary(pmcid: &str) -> Result<ESummaryResponse, reqwest:
     let client = Client::new();
     let url = format!("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pmc&id={}&retmode=json", pmcid);
     client.get(&url).send().await?.json().await
+}
+
+const LM_STUDIO_URL: &str = "http://localhost:1234/v1/chat/completions";
+
+pub async fn ask_local_llm(system_prompt: &str, user_prompt: &str) -> Result<String, reqwest::Error> {
+    let client = Client::new();
+    
+    let payload = json!({
+        "model": "local-model", 
+        "messages": [
+            { "role": "system", "content": system_prompt },
+            { "role": "user", "content": user_prompt }
+        ],
+        "temperature": 0.3 
+    });
+
+    let res = client.post(LM_STUDIO_URL)
+        .json(&payload)
+        .send()
+        .await?;
+
+    let json_res: serde_json::Value = res.json().await?;
+    
+    // Extract the text response
+    let content = json_res["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("Error parsing LLM response")
+        .to_string();
+
+    Ok(content)
 }
 
 
