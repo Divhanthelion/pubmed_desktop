@@ -10,6 +10,10 @@ struct PmcExplorerApp {
     author_input: String,
     journal_input: String,
     
+    natural_language_input: String,
+    llm_summary: Arc<Mutex<Option<String>>>,
+    llm_is_loading: Arc<Mutex<bool>>,
+
     /// How many results to ask NCBI for per search.
     /// Default 100 (you can raise it up to 10 000 if you really want a huge list).
     results_per_page: usize,
@@ -34,6 +38,9 @@ impl Default for PmcExplorerApp {
             keyword_input: String::new(),
             author_input: String::new(),
             journal_input: String::new(),
+            natural_language_input: String::new(),
+            llm_summary: Arc::new(Mutex::new(None)),
+            llm_is_loading: Arc::new(Mutex::new(false)),
             results_per_page: 100, // <-- sensible default
             is_loading: Arc::new(Mutex::new(false)),
             search_results: Arc::new(Mutex::new(None)),
@@ -57,6 +64,36 @@ impl eframe::App for PmcExplorerApp {
             .resizable(true)
             .min_size(250.0)
             .show_inside(ui, |ui| {
+                ui.heading("AI Search Agent");
+                ui.text_edit_multiline(&mut self.natural_language_input);
+
+                if ui.button("Translate to PMC Query & Search").clicked() {
+                    *self.is_loading.lock().unwrap() = true;
+                    let user_query = self.natural_language_input.clone();
+                    let results_clone = Arc::clone(&self.search_results);
+                    let loading_clone = Arc::clone(&self.is_loading);
+                    let ctx_clone = ui.ctx().clone();
+                    let results_per_page = self.results_per_page as u32;
+
+                    self.rt.spawn(async move {
+                        let system_prompt = "You are an NCBI E-utilities expert. Convert the user's natural language request into a highly sophisticated PMC boolean search query. Use appropriate tags like [Title/Abstract], [Author], or [Journal]. OUTPUT ONLY THE RAW QUERY STRING. Do not include any conversational text or markdown formatting.";
+                        
+                        if let Ok(ncbi_query) = pmc_api::ask_local_llm(system_prompt, &user_query).await {
+                            // Trim any accidental whitespace or quotes the LLM might add
+                            let clean_query = ncbi_query.trim().trim_matches('"').to_string();
+                            
+                            // Now pass this strictly formatted query directly to your existing search API
+                            if let Ok(res) = pmc_api::search_pmc(&clean_query, results_per_page).await {
+                                *results_clone.lock().unwrap() = Some(res.esearchresult.idlist);
+                            }
+                        }
+                        *loading_clone.lock().unwrap() = false;
+                        ctx_clone.request_repaint();
+                    });
+                }
+                
+                ui.add_space(10.0);
+
                 ui.heading("Query Builder");
                 ui.separator();
 
@@ -179,6 +216,39 @@ impl eframe::App for PmcExplorerApp {
                 ui.add_space(10.0);
             }
 
+            ui.separator();
+            if ui.button("🧠 Generate Cliff Notes (Local LLM)").clicked() {
+                *self.llm_is_loading.lock().unwrap() = true;
+                let text_to_summarize = self.detail_parsed_article.lock().unwrap()
+                    .as_ref()
+                    .map(|p| format!("Abstract: {}\n\nBody: {}", p.abstract_text, p.body_text))
+                    .unwrap_or_default();
+
+                let summary_arc = Arc::clone(&self.llm_summary);
+                let loading_arc = Arc::clone(&self.llm_is_loading);
+                let ctx_clone = ui.ctx().clone();
+
+                self.rt.spawn(async move {
+                    let system_prompt = "You are an expert medical researcher. Provide a highly structured, concise 'cliff notes' summary of the following study. Include: Key Objective, Methodology, Primary Findings, and Conclusion.";
+                    if let Ok(summary) = pmc_api::ask_local_llm(system_prompt, &text_to_summarize).await {
+                        *summary_arc.lock().unwrap() = Some(summary);
+                    }
+                    *loading_arc.lock().unwrap() = false;
+                    ctx_clone.request_repaint();
+                });
+            }
+
+            // Display the summary if it exists
+            if *self.llm_is_loading.lock().unwrap() {
+                ui.horizontal(|ui| { ui.spinner(); ui.label("LLM is reading..."); });
+            } else if let Some(summary) = &*self.llm_summary.lock().unwrap() {
+                ui.group(|ui| {
+                    ui.heading("AI Summary");
+                    ui.label(summary);
+                });
+            }
+            ui.add_space(10.0);
+
             // Fully Native Open Access Text
             ui.label(egui::RichText::new("Open Access Full Text / Abstract:").strong());
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -240,6 +310,8 @@ impl PmcExplorerApp {
         *self.detail_parsed_article.lock().unwrap() = None;
         *self.detail_related_links.lock().unwrap() = None;
         *self.detail_url.lock().unwrap() = None;
+        *self.llm_summary.lock().unwrap() = None;
+        *self.llm_is_loading.lock().unwrap() = false;
 
         let title_arc = Arc::clone(&self.detail_title);
         let ids_arc = Arc::clone(&self.detail_ids);
