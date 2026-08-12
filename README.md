@@ -36,8 +36,8 @@ LM Studio allows you to run powerful AI models entirely offline for maximum priv
 ### Step 3: Run PMC Explorer
 1. In your terminal, clone this repository (or download it as a ZIP and extract it):
    ```bash
-   git clone <your-repository>
-   cd PMC_Explorer
+   git clone https://github.com/Divhanthelion/pubmed_desktop.git
+   cd pubmed_desktop
    ```
 2. Run the application:
    ```bash
