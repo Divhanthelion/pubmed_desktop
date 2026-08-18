@@ -1,60 +1,39 @@
-# PMC Explorer with Local AI
+# PMC Explorer
 
-A blazing-fast, natively rendered desktop application designed to explore, harvest, and summarize open-access research articles from the **NCBI PubMed Central (PMC)** database using the power of Local LLMs.
+Desktop app to search PubMed Central, open or save NCBI’s PDF, and optionally ask a local LM Studio model to translate a query or summarize JATS text.
 
-Built entirely in Rust using the hardware-accelerated `eframe` / `egui` framework, PMC Explorer delivers a unified interface without relying on clunky embedded chromium instances. It natively parses JATS XML data from PMC and feeds it directly into your own private AI models to generate immediate summaries and execute highly-tuned semantic searches.
+This is not a PDF viewer and not a clinical decision tool. The paper is NCBI’s file. The in-app abstract/body dump is optional fuel for the local model.
 
-<img width="1070" height="940" alt="Screenshot 2026-05-12 at 6 44 42 PM" src="https://github.com/user-attachments/assets/5bf63691-7af0-447e-89be-b4b811f29255" />
+## Requirements
 
----
+- Rust (`rustup`)
+- An NCBI developer email (sent as `tool=pmc_explorer` on E-utilities calls)
+- LM Studio on `localhost:1234` only if you use natural-language search or cliff notes
 
-## 🚀 The Ultimate Beginner's Setup Guide
+## Run
 
-This guide will take you from zero to running your own private AI-powered medical research assistant on your machine.
+```bash
+git clone https://github.com/Divhanthelion/pubmed_desktop.git
+cd pubmed_desktop
+cargo run --release
+```
 
-### Step 1: Install Rust
-Rust is the incredibly fast programming language this application is built in.
-1. Open your computer's terminal (Command Prompt/PowerShell on Windows, Terminal on macOS/Linux).
-2. Paste the following command and hit Enter:
-   - **Mac/Linux:** `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-   - **Windows:** Download and run `rustup-init.exe` from [rustup.rs](https://rustup.rs/).
-3. Follow the on-screen prompts (choose option 1 for default installation).
-4. Restart your terminal.
+Put your NCBI email in the field in the left panel. Searches are capped at 200 IDs.
 
-### Step 2: Install and Setup LM Studio
-LM Studio allows you to run powerful AI models entirely offline for maximum privacy.
-1. Download **LM Studio** from [lmstudio.ai](https://lmstudio.ai/) and install it.
-2. Open LM Studio and use the search bar to find a model. 
-   - *Recommendation:* If you have a powerful machine (16GB+ VRAM), search for **Qwen 2.5/3.6** or a high-context model. If you have a standard laptop, search for **Llama 3 8B** or **Mistral v0.3**.
-   - Make sure you pick a model with a high "Context Window" (e.g., 32k or 65k) if you want the AI to read massive research papers.
-3. Download the model (usually ends in `.gguf`).
-4. On the left side of LM Studio, click the **Local Server** tab (the icon looks like a double-ended arrow `↔`).
-5. Select the model you just downloaded from the top dropdown.
-6. Ensure the port is set to `1234` (this is the default).
-7. Click **Start Server**. Your local offline AI is now actively waiting for requests!
+LM Studio: start the local server on port 1234. Without it, keyword/author/journal search, Open PDF, and Save PDF still work.
 
-### Step 3: Run PMC Explorer
-1. In your terminal, clone this repository (or download it as a ZIP and extract it):
-   ```bash
-   git clone https://github.com/Divhanthelion/pubmed_desktop.git
-   cd pubmed_desktop
-   ```
-2. Run the application:
-   ```bash
-   cargo run --release
-   ```
-   *(Note: The first time you run this, Rust will take a minute or two to download and compile the interface libraries. Subsequent runs will be instant).*
+## What it does
 
----
+- **Query builder** — Keyword, author, journal → NCBI `esearch` (boolean `AND`).
+- **Translate to PMC query** — Local LLM returns a boolean query string. That string is shown, then searched. It is not semantic search.
+- **Open PDF / Save PDF** — System viewer, or download NCBI’s `/pdf/` file to a path you pick. HTML 200 bodies that are not `%PDF` are reported as no PDF.
+- **Open HTML** — Article page in the system browser.
+- **Cliff notes** — Sends parsed JATS abstract and body to the local model. Model text is not the paper.
+- **Related links** — NCBI `elink`, first page of IDs.
 
-## Features
+Timeouts are 30s for NCBI/LLM HTTP and 120s for PDF download. Failures show as `NCBI:`, `LLM:`, `Parse:`, or `PDF:` instead of an empty spinner.
 
-- **AI Search Agent**: Type exactly what you are looking for in native English (e.g., *"How do mRNA vaccines affect myocardium in youth?"*). The Local LLM will instantly translate your request into a highly optimized, complex boolean PMC query string and fetch the results!
-- **AI Cliff Notes Summarizer**: Click **"🧠 Generate Cliff Notes"** while viewing a massive 20,000+ word paper. The app will securely pipe the entire native JATS XML text straight to your offline LM Studio model and return a structured summary containing the *Objective*, *Methodology*, *Primary Findings*, and *Conclusion*.
-- **Advanced Query Builder**: A clean left-hand side panel enabling manual filtering by **Keyword**, **Author**, and **Journal**.
-- **Native JATS XML Parsing**: Uses NCBI `efetch` endpoints alongside `roxmltree` to parse raw JATS XML structures flawlessly in the background, rendering complex medical abstracts natively into the canvas.
-- **Discovery Connections**: Fully unified with the `elink` API, automatically listing related studies and internal citations to easily bounce between related literature.
+## Layout
 
-## Architecture & Code Structure
-* **`src/main.rs`**: Core application bootstrapping, state management via Arc/Mutex, Tokio async runtime spawns, and all the reactive front-end `eframe` component declarations.
-* **`src/pmc_api.rs`**: Handles complex underlying logic, including local OpenAI-compatible requests to `localhost:1234`, URL building for four major NCBI E-Utilities (`esearch`, `esummary`, `efetch`, and `elink`), and traversing raw XML DOM trees to cleanly format paragraphs.
+- `src/main.rs` — eframe UI, Tokio tasks, error/query display, PDF actions.
+- `src/pmc_api.rs` — Shared `reqwest` client, E-utilities (`esearch`, `esummary`, `efetch`, `elink`) with `tool`/`email`, idconv, local chat completions, JATS text extract, PDF fetch.

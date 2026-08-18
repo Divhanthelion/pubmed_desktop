@@ -2,7 +2,7 @@
 name = "pmc_explorer"
 version = "0.1.0"
 edition = "2024"
-description = "Native Apple Silicon UI for PMC Data Harvesting"
+description = "Search PubMed Central and open or save NCBI PDFs"
 
 [dependencies]
 eframe = "0.34"
@@ -12,3 +12,4 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 url = "2.5"
 roxmltree = "0.21.1"
+rfd = "0.15"
