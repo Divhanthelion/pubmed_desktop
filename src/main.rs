@@ -1,15 +1,48 @@
 mod pmc_api;
 
+use directories::ProjectDirs;
 use eframe::egui;
-use pmc_api::{PmcQueryBuilder, MAX_RETMAX};
+use pmc_api::{MAX_RETMAX, PmcQueryBuilder};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
+
+#[derive(Serialize, Deserialize, Default)]
+struct Preferences {
+    ncbi_email: String,
+}
+
+fn preferences_path() -> Option<PathBuf> {
+    ProjectDirs::from("", "", "pmc_explorer").map(|dirs| dirs.config_dir().join("prefs.json"))
+}
+
+fn load_preferences() -> Preferences {
+    preferences_path()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default()
+}
+
+fn save_preferences(prefs: &Preferences) {
+    if let Some(path) = preferences_path() {
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(
+            path,
+            serde_json::to_string_pretty(prefs).unwrap_or_default(),
+        );
+    }
+}
 
 struct PmcExplorerApp {
     keyword_input: String,
     author_input: String,
     journal_input: String,
     email_input: String,
+    last_saved_email: String,
 
     natural_language_input: String,
     llm_summary: Arc<Mutex<Option<String>>>,
@@ -37,11 +70,13 @@ struct PmcExplorerApp {
 
 impl Default for PmcExplorerApp {
     fn default() -> Self {
+        let prefs = load_preferences();
         Self {
             keyword_input: String::new(),
             author_input: String::new(),
             journal_input: String::new(),
-            email_input: String::new(),
+            email_input: prefs.ncbi_email.clone(),
+            last_saved_email: prefs.ncbi_email,
             natural_language_input: String::new(),
             llm_summary: Arc::new(Mutex::new(None)),
             llm_is_loading: Arc::new(Mutex::new(false)),
@@ -79,7 +114,13 @@ impl eframe::App for PmcExplorerApp {
 
                 ui.horizontal(|ui| {
                     ui.label("NCBI email:");
-                    ui.text_edit_singleline(&mut self.email_input);
+                    let response = ui.text_edit_singleline(&mut self.email_input);
+                    if response.lost_focus() && self.email_input != self.last_saved_email {
+                        self.last_saved_email = self.email_input.clone();
+                        save_preferences(&Preferences {
+                            ncbi_email: self.email_input.clone(),
+                        });
+                    }
                 });
                 ui.label(
                     egui::RichText::new("Developer email sent as NCBI tool=pmc_explorer.")
@@ -89,6 +130,7 @@ impl eframe::App for PmcExplorerApp {
 
                 if ui.button("Translate to PMC Query & Search").clicked() {
                     *self.is_loading.lock().unwrap() = true;
+                    *self.search_results.lock().unwrap() = None;
                     set_opt(&self.last_error, None);
                     set_opt(&self.last_ncbi_query, None);
                     let user_query = self.natural_language_input.clone();
@@ -167,6 +209,7 @@ impl eframe::App for PmcExplorerApp {
                     });
                 } else if ui.button("Search PMC").clicked() {
                     *self.is_loading.lock().unwrap() = true;
+                    *self.search_results.lock().unwrap() = None;
                     set_opt(&self.last_error, None);
 
                     let mut builder = PmcQueryBuilder::new();
@@ -349,15 +392,14 @@ impl eframe::App for PmcExplorerApp {
                 }
 
                 ui.add_space(10.0);
-                if let Some(links) = &*self.detail_related_links.lock().unwrap() {
-                    if !links.is_empty() {
-                        ui.heading("Related / Cited Articles");
-                        for link in links.iter().take(10) {
-                            if ui.link(format!("PMCID: {}", link)).clicked() {
-                                ui.ctx().open_url(egui::OpenUrl::same_tab(
-                                    pmc_api::pmc_article_url(link),
-                                ));
-                            }
+                if let Some(links) = &*self.detail_related_links.lock().unwrap()
+                    && !links.is_empty()
+                {
+                    ui.heading("Related / Cited Articles");
+                    for link in links.iter().take(10) {
+                        if ui.link(format!("PMCID: {}", link)).clicked() {
+                            ui.ctx()
+                                .open_url(egui::OpenUrl::same_tab(pmc_api::pmc_article_url(link)));
                         }
                     }
                 }
@@ -457,7 +499,7 @@ impl PmcExplorerApp {
         self.rt.spawn(async move {
             let mut errors = Vec::new();
 
-            match pmc_api::convert_ids(&pmcid).await {
+            match pmc_api::convert_ids(&pmcid, &email).await {
                 Ok(conv_data) => {
                     if let Some(record) = conv_data.records.first() {
                         let doi = record.doi.as_deref().unwrap_or("N/A");
@@ -468,16 +510,20 @@ impl PmcExplorerApp {
                 Err(e) => errors.push(format!("NCBI idconv: {e}")),
             }
 
+            pmc_api::ncbi_rate_limit_pause().await;
+
             match pmc_api::fetch_pmc_summary(&pmcid, &email).await {
                 Ok(summary) => {
-                    if let Some(article_data) = summary.result.get(&pmcid) {
-                        if let Some(title) = article_data.get("title").and_then(|t| t.as_str()) {
-                            *title_arc.lock().unwrap() = Some(title.to_string());
-                        }
+                    if let Some(article_data) = summary.result.get(&pmcid)
+                        && let Some(title) = article_data.get("title").and_then(|t| t.as_str())
+                    {
+                        *title_arc.lock().unwrap() = Some(title.to_string());
                     }
                 }
                 Err(e) => errors.push(format!("NCBI esummary: {e}")),
             }
+
+            pmc_api::ncbi_rate_limit_pause().await;
 
             match pmc_api::fetch_pmc_fulltext_xml(&pmcid, &email).await {
                 Ok(xml_data) => match pmc_api::parse_jats_xml(&xml_data) {
@@ -491,16 +537,16 @@ impl PmcExplorerApp {
                 Err(e) => errors.push(format!("NCBI efetch: {e}")),
             }
 
+            pmc_api::ncbi_rate_limit_pause().await;
+
             match pmc_api::fetch_pmc_links(&pmcid, &email).await {
                 Ok(link_data) => {
-                    if let Some(linksets) = link_data.linksets {
-                        if let Some(ls) = linksets.into_iter().next() {
-                            if let Some(dbs) = ls.linksetdbs {
-                                if let Some(db) = dbs.into_iter().next() {
-                                    *links_arc.lock().unwrap() = Some(db.links);
-                                }
-                            }
-                        }
+                    if let Some(linksets) = link_data.linksets
+                        && let Some(ls) = linksets.into_iter().next()
+                        && let Some(dbs) = ls.linksetdbs
+                        && let Some(db) = dbs.into_iter().next()
+                    {
+                        *links_arc.lock().unwrap() = Some(db.links);
                     }
                 }
                 Err(e) => errors.push(format!("NCBI elink: {e}")),
